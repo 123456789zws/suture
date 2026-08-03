@@ -3,7 +3,7 @@ from typing import Callable, Type
 from abc import ABC, abstractmethod
 
 import ida_hexrays
-import ida_hexrays_ctree
+import ida_kernwin
 import ida_typeinf
 import ida_lines
 import utils
@@ -21,7 +21,7 @@ class Slice:
 	             y: int | Slice | tuple[int | Slice, ...] | None = None,
 	             z: int | Slice | tuple[int | Slice, ...] | None = None,
 	             a: dict[int, Slice] | Slice | None = None,
-	             predicate: Callable[[ida_hexrays_ctree.cexpr_t], bool] | None = None
+	             predicate: Callable[[ida_hexrays.cexpr_t], bool] | None = None
 	             ):
 		self.base = base
 		self.x = x
@@ -30,11 +30,11 @@ class Slice:
 		self.a = a
 		self.predicate = predicate
 		if a and isinstance(base, int):
-			assert base == ida_hexrays_ctree.cot_call, '"a=" parameter is supported for cot_call only'
+			assert base == ida_hexrays.cot_call, '"a=" parameter is supported for cot_call only'
 		self.assert_no_nested_cot_call(True)
 
 	def assert_no_nested_cot_call(self, is_root=False):
-		if not is_root and self.base == ida_hexrays_ctree.cot_call:
+		if not is_root and self.base == ida_hexrays.cot_call:
 			if self.a and isinstance(self.a, Slice):
 				raise NotImplementedError("Nested cot_call with wildcard is not supported. Please use a={x:y}")
 
@@ -49,7 +49,7 @@ class Slice:
 				if isinstance(val, Slice):
 					val.assert_no_nested_cot_call()
 
-	def matches(self, expr: ida_hexrays_ctree.cexpr_t, collected: list[ida_hexrays_ctree.cexpr_t]) -> bool:
+	def matches(self, expr: ida_hexrays.cexpr_t, collected: list[ida_hexrays.cexpr_t]) -> bool:
 		init_len = len(collected)
 		k1 = False
 
@@ -125,7 +125,7 @@ class Slice:
 					return False
 				collected.append(leaf)
 
-		if self.a and expr.op == ida_hexrays_ctree.cot_call:
+		if self.a and expr.op == ida_hexrays.cot_call:
 			if not isinstance(self.a, dict):
 				raise Exception("Failed a= expansion")
 
@@ -304,7 +304,7 @@ class Rule(ABC):
 		# if pattern is elevated it ignores exlusivity
 		return False
 
-	def match(self, start: ida_hexrays_ctree.cexpr_t) -> list[ida_hexrays_ctree.cexpr_t] | None:
+	def match(self, start: ida_hexrays.cexpr_t) -> list[ida_hexrays.cexpr_t] | None:
 		collected = list()
 		p = self._expanded_pattern or self.pattern
 		if p.matches(start, collected):
@@ -317,7 +317,7 @@ class Rule(ABC):
 		pass
 
 	@abstractmethod
-	def extract(self, items: list[ida_hexrays_ctree.cexpr_t]) -> RuleExtractResult:
+	def extract(self, items: list[ida_hexrays.cexpr_t]) -> RuleExtractResult:
 		pass
 
 	def __str__(self):
@@ -408,7 +408,7 @@ class RuleSet(ABC):
 			ins = rule_cls()
 			pattern = ins.pattern
 
-			if pattern.base == ida_hexrays_ctree.cot_call:
+			if pattern.base == ida_hexrays.cot_call:
 				if isinstance(pattern.a, Slice):
 					for i in range(RuleSet.ArgumentLimit):
 						r = rule_cls()
@@ -437,25 +437,26 @@ class RuleSet(ABC):
 			reverse=True
 		)
 
-	def add_rules(self, rules: list[Rule]):
-		self._rules.extend(rules)
-
 	def __str__(self):
 		return str(self.__class__.__name__)
 
+	def __add__(self, other):
+		self._rules.extend(other._rules)
+		return self
 
-class Visitor(ida_hexrays_ctree.ctree_visitor_t):
+
+class Visitor(ida_hexrays.ctree_visitor_t):
 	def __init__(self, matcher: Matcher):
-		super().__init__(ida_hexrays_ctree.CV_PARENTS)
+		super().__init__(ida_hexrays.CV_PARENTS)
 		self.matcher = matcher
 
-	def visit_expr(self, arg0: ida_hexrays_ctree.cexpr_t) -> int:
+	def visit_expr(self, arg0: ida_hexrays.cexpr_t) -> int:
 		self.matcher.gather(len(self.parents), arg0)
 		return 0
 
 
 class MatchResult:
-	def __init__(self, rule: Rule, items: list[ida_hexrays_ctree.cexpr_t]):
+	def __init__(self, rule: Rule, items: list[ida_hexrays.cexpr_t]):
 		self.rule = rule
 		self.items = items
 
@@ -464,9 +465,9 @@ class MatchResult:
 
 
 class Matcher:
-	def __init__(self, cfunc: ida_hexrays_ctree.cfunc_t, rule_set: RuleSet):
+	def __init__(self, cfunc: ida_hexrays.cfunc_t, rule_set: RuleSet):
 		self.rule_set = rule_set
-		self.heads: dict[int, tuple[int, ida_hexrays_ctree.cexpr_t]] = dict()
+		self.heads: dict[int, tuple[int, ida_hexrays.cexpr_t]] = dict()
 		self.hooks: set[int] = self.get_hooks(rule_set)
 		self.visitor = Visitor(self).apply_to(cfunc.body, None)
 
@@ -490,12 +491,12 @@ class Matcher:
 		assert cot_none not in ops, "Rule pattern can't start with cot_none"
 		return ops
 
-	def gather(self, depth: int, item: ida_hexrays_ctree.cexpr_t):
+	def gather(self, depth: int, item: ida_hexrays.cexpr_t):
 		if item.op in self.hooks:
 			self.heads[item.obj_id] = (depth, item)
 
 	def match(self) -> list[MatchResult]:
-		excluded: list[ida_hexrays_ctree.citem_t] = list()
+		excluded: list[ida_hexrays.citem_t] = list()
 		matches: list[MatchResult] = list()
 
 		for depth, item in sorted(self.heads.values(), key=lambda x: x[0]):
@@ -517,7 +518,7 @@ class Matcher:
 						print("  MATCHED")
 
 					if rule.exclusive:
-						if item.op == ida_hexrays_ctree.cot_call:
+						if item.op == ida_hexrays.cot_call:
 							if len(items) > 1:
 								args = [a for a in item.a]
 								found = False
@@ -537,7 +538,7 @@ class Matcher:
 
 
 class Extractor:
-	def __init__(self, lvar_name: str, cfunc: ida_hexrays_ctree.cfunc_t, matches: list[MatchResult]):
+	def __init__(self, lvar_name: str, cfunc: ida_hexrays.cfunc_t, matches: list[MatchResult]):
 		self.lvar_name = lvar_name
 		self.lvars = cfunc.get_lvars()
 		self.filtered = self.filter(matches)
@@ -551,7 +552,7 @@ class Extractor:
 		# keep only items that reference target lvar
 		for r in results:
 			for i in r.items:
-				if i.op == ida_hexrays_ctree.cot_var and self.is_target_lvar(i.get_v().idx):
+				if i.op == ida_hexrays.cot_var and self.is_target_lvar(i.get_v().idx):
 					filtered.append(r)
 					break
 
@@ -569,9 +570,11 @@ class Extractor:
 		return self.filtered, self.extract()
 
 
-class Populator:
-	Struct = dict
+class Struct(dict):
+	pass
 
+
+class Populator:
 	def __init__(self, struct: ida_typeinf.tinfo_t, results: list[RuleExtractResult]):
 		self.shift = utils.get_ptr_shift(struct)
 		self.struct_tif = struct.get_pointed_object() if struct.is_ptr() else struct
@@ -579,42 +582,41 @@ class Populator:
 		self.run()
 
 	def run(self):
-		layout = self.create_layout(self.results)
-
-		def _print_layout(l: Populator.Struct, lvl=0):
-			for k, v in sorted(l.items()):
-				if isinstance(v, Populator.Struct):
-					print("    " * lvl + f"0x{k:02X} ->")
-					_print_layout(v, lvl + 1)
-				else:
-					print("    " * lvl + f"0x{k:02X}: {v}")
-
-		if DEBUG:
-			print("\n------ LAYOUT ------")
-			_print_layout(layout)
-			print()
-
+		layout_raw = self.create_layout(self.results)
+		layout = self.clear_overlaps(layout_raw)
 		self.populate(self.struct_tif, layout, self.shift)
+
+	def pprint_layout(self, l: Struct, lvl=0):
+		for k, v in sorted(l.items()):
+			if isinstance(v, Struct):
+				print("    " * lvl + f"0x{k:02X} ->")
+				self.pprint_layout(v, lvl + 1)
+			else:
+				print("    " * lvl + f"0x{k:02X}: {v}")
 
 	def populate(self, s: ida_typeinf.tinfo_t, l: dict[int, dict | tinfo_t], shift=0):
 		for o, t in l.items():
+			if utils.to_signed(o) + shift < 0:
+				continue
+
 			o += shift
 			n = f"field_{o:X}"
 			added = False
 
 			if DEBUG:
-				print(f"Populate: {s} @ 0x{o:02X} -> {t}")
+				print(f"\nPopulate: {s} @ 0x{o:02X} -> {t}")
 
-			ts = t.get_size() if isinstance(t, tinfo_t) else utils.get_proc_ptr_size()
-			fit, ovf = utils.can_fit_member(s, o, ts)
+			tsize = t.get_size() if isinstance(t, tinfo_t) else utils.get_proc_ptr_size()
+			fit, ovf = utils.can_fit_member(s, o, tsize)
 
-			if isinstance(t, Populator.Struct):
+			if isinstance(t, Struct):
 				tm = utils.get_member_type(s, o)
 				if tm and utils.is_struct_ptr(tm):
 					ts = tm.get_pointed_object()
 					shift = utils.get_ptr_shift(tm)
 					self.populate(ts, t, shift)
 					continue
+
 				elif fit:
 					n = utils.new_tmpstruct_name()
 					ts = utils.add_struct(n)
@@ -630,19 +632,19 @@ class Populator:
 			utils.log_struct_action(s, o, added)
 
 	def resolve_conflict(self,
-	                     org: Populator.Struct | tinfo_t,
-	                     new: Populator.Struct | tinfo_t
-	                     ) -> Populator.Struct | tinfo_t:
+	                     org: Struct | tinfo_t,
+	                     new: Struct | tinfo_t
+	                     ) -> Struct | tinfo_t:
 		if DEBUG:
 			print(f"Type Conflict: ORG: {org} <-> NEW: {new}")
 
 		if org == new:
 			return org
 
-		if isinstance(org, Populator.Struct):
+		if isinstance(org, Struct):
 			return org
 
-		if isinstance(new, Populator.Struct):
+		if isinstance(new, Struct):
 			return new
 
 		org_str = str(org)
@@ -685,24 +687,24 @@ class Populator:
 
 		return new
 
-	def create_layout(self, results: list[RuleExtractResult]):
-		struct = Populator.Struct()
+	def create_layout(self, results: list[RuleExtractResult]) -> Struct:
+		struct = Struct()
 
 		def navigate(s, i):
-			o = i.off
-			t = i.tif
+			o: int = i.off
+			t: tinfo_t = i.tif
 
 			if isinstance(t, tinfo_t):
 				org = s.get(o, None)
-				if not org:
+				if org is None:
 					s[o] = t
 				else:
 					s[o] = self.resolve_conflict(org, t)
 
 			elif isinstance(t, AccessInfo):
-				l = s.setdefault(o, Populator.Struct())
+				l = s.setdefault(o, Struct())
 				if isinstance(l, tinfo_t):
-					d = Populator.Struct()
+					d = Struct()
 					navigate(d, t)
 					s[o] = self.resolve_conflict(l, d)
 				else:
@@ -712,4 +714,45 @@ class Populator:
 			for info in r:
 				navigate(struct, info)
 
+		if DEBUG:
+			print(f"\n------ LAYOUT RAW ------")
+			self.pprint_layout(struct)
+
 		return struct
+
+	def clear_overlaps(self, layout: Struct, nested: Struct | None = None) -> Struct:
+		if not nested:
+			nested = Struct(layout)
+
+		if DEBUG:
+			print("\n------ OVERLAP CHECK ------")
+			self.pprint_layout(layout)
+
+		for off, tif in list(layout.items()):
+			if isinstance(tif, Struct):
+				self.clear_overlaps(tif, nested.setdefault(off, Struct()))
+
+			elif isinstance(tif, tinfo_t):
+				size = tif.get_size()
+				if size == ida_typeinf.BADSIZE:
+					del nested[off]
+					ida_kernwin.warning(f"Failed to retrieve type size for:\n{tif}\n\nType candidate will be ignored.")
+					continue
+
+				for i in range(size - 1):
+					m_off = off + 1 + i
+					if m_tif := layout.get(m_off, None):
+						if m_off in nested:
+							del nested[m_off]
+						if DEBUG:
+							print(f"Overlap Removed: {m_tif} @ 0x{m_off:02X} -> {tif} @ 0x{off:02X}")
+
+			else:
+				raise TypeError(f"Unexpected member type: {tif}")
+		
+		if DEBUG:
+			print(f"\n------ LAYOUT CLEARED ------")
+			self.pprint_layout(nested)
+
+		return nested
+

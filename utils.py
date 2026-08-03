@@ -2,9 +2,8 @@ import common
 import ida_typeinf
 import ida_kernwin
 import ida_hexrays
-import ida_hexrays_micro
-import ida_hexrays_ctree
 import idc
+import ctypes
 
 
 def is_struct_ptr(tif: ida_typeinf.tinfo_t) -> bool:
@@ -102,12 +101,12 @@ def ask_struct_name() -> str | None:
 		return name
 
 
-def get_current_vdui() -> ida_hexrays_ctree.vdui_t:
+def get_current_vdui() -> ida_hexrays.vdui_t:
 	widget = ida_kernwin.get_current_widget()
 	return ida_hexrays.get_widget_vdui(widget)
 
 
-def get_cursor_lvar(vdui) -> ida_hexrays_micro.lvar_t | None:
+def get_cursor_lvar(vdui) -> ida_hexrays.lvar_t | None:
 	try:
 		cit = vdui.item.it
 		lvars = vdui.cfunc.get_lvars()
@@ -124,12 +123,19 @@ def can_process_lvar(vdui: ida_hexrays.vdui_t) -> bool:
 	if not vdui:
 		return False
 
-	if vdui.get_current_item(ida_hexrays_ctree.USE_KEYBOARD):
+	if vdui.get_current_item(ida_hexrays.USE_KEYBOARD):
 		lvar = get_cursor_lvar(vdui)
 		if lvar:
 			return True
 
 	return False
+
+
+def get_action_menu_label() -> str:
+	lvar = get_cursor_lvar(get_current_vdui())
+	if is_struct_ptr(lvar.tif) or lvar.tif.is_struct():
+		return "Update struct members"
+	return "Create struct members"
 
 
 def log_struct_action(struct_tif: ida_typeinf.tinfo_t,
@@ -156,3 +162,10 @@ def get_ptr_shift(t: ida_typeinf.tinfo_t) -> int:
 
 def get_proc_ptr_size() -> int:
 	return 8 if idc.__EA64__ else 4
+
+
+def to_signed(val: int) -> int:
+	if idc.__EA64__:
+		return ctypes.c_int64(val).value
+	else:
+		return ctypes.c_int32(val).value
